@@ -92,6 +92,7 @@ impl Filter {
             Filter::GlowFilter(filter) => filter.calculate_dest_rect(source_rect),
             Filter::DropShadowFilter(filter) => filter.calculate_dest_rect(source_rect),
             Filter::BevelFilter(filter) => filter.calculate_dest_rect(source_rect),
+            Filter::GradientBevelFilter(filter) => filter.calculate_dest_rect(source_rect),
             Filter::DisplacementMapFilter(filter) => filter.calculate_dest_rect(source_rect),
             _ => source_rect,
         }

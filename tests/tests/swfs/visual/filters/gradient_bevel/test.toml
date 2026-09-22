@@ -1,0 +1,15 @@
+num_frames = 1
+
+[image_comparisons.output]
+# Allow small blur and alpha rounding differences from Flash Player.
+tolerance = 8
+max_outliers = 0
+
+[player_options]
+with_renderer = { optional = false, quality = "low" }
+
+[[compilers]]
+type = "Asc"
+class = "Test"
+scripts = ["Test.as"]
+swf_version = 10

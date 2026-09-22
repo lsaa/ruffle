@@ -4,6 +4,7 @@ mod color_matrix;
 mod displacement_map;
 mod drop_shadow;
 mod glow;
+mod gradient_bevel;
 mod shader;
 
 use std::collections::HashSet;
@@ -17,6 +18,7 @@ use crate::filters::color_matrix::ColorMatrixFilter;
 use crate::filters::displacement_map::DisplacementMapFilter;
 use crate::filters::drop_shadow::DropShadowFilter;
 use crate::filters::glow::GlowFilter;
+use crate::filters::gradient_bevel::GradientBevelFilter;
 use crate::filters::shader::ShaderFilter;
 use crate::surface::target::CommandTarget;
 use bytemuck::{Pod, Zeroable};
@@ -191,6 +193,7 @@ pub struct Filters {
     pub shader: ShaderFilter,
     pub glow: GlowFilter,
     pub bevel: BevelFilter,
+    pub gradient_bevel: GradientBevelFilter,
     pub displacement_map: DisplacementMapFilter,
 }
 
@@ -202,6 +205,7 @@ impl Filters {
             shader: ShaderFilter::new(),
             glow: GlowFilter::new(device),
             bevel: BevelFilter::new(device),
+            gradient_bevel: GradientBevelFilter::new(device),
             displacement_map: DisplacementMapFilter::new(device),
         }
     }
@@ -268,6 +272,15 @@ impl Filters {
                 &filter,
                 &self.blur,
             )),
+            Filter::GradientBevelFilter(filter) => Some(descriptors.filters.gradient_bevel.apply(
+                descriptors,
+                texture_pool,
+                draw_encoder,
+                staging_belt,
+                &source,
+                &filter,
+                &self.blur,
+            )),
             Filter::DisplacementMapFilter(filter) => descriptors.filters.displacement_map.apply(
                 descriptors,
                 texture_pool,
@@ -282,13 +295,13 @@ impl Filters {
 
                 let name = match filter {
                     Filter::GradientGlowFilter(_) => "GradientGlowFilter",
-                    Filter::GradientBevelFilter(_) => "GradientBevelFilter",
                     Filter::ConvolutionFilter(_) => "ConvolutionFilter",
                     Filter::ColorMatrixFilter(_)
                     | Filter::BlurFilter(_)
                     | Filter::GlowFilter(_)
                     | Filter::DropShadowFilter(_)
                     | Filter::BevelFilter(_)
+                    | Filter::GradientBevelFilter(_)
                     | Filter::DisplacementMapFilter(_)
                     | Filter::ShaderFilter(_) => unreachable!(),
                 };
