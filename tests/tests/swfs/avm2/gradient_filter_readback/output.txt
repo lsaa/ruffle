@@ -1,0 +1,8 @@
+[class GradientBevelFilter]
+colors: 1193046,11259375,6636321
+alpha bytes: 0,51,255
+ratios: 17,128,239
+[class GradientGlowFilter]
+colors: 1193046,11259375,6636321
+alpha bytes: 0,51,255
+ratios: 17,128,239
