@@ -1,0 +1,2 @@
+ancestor: 1 child: 2 direct: 1
+ancestor: 1 child: 3 direct: 1

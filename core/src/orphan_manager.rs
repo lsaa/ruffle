@@ -1,7 +1,10 @@
 //! Special handling for AVM2 orphan objects
 
 use crate::context::UpdateContext;
-use crate::display_object::{DisplayObject, DisplayObjectWeak, TDisplayObject};
+use crate::display_object::{
+    DisplayObject, DisplayObjectWeak, TDisplayObject, TDisplayObjectContainer,
+};
+use crate::frame_lifecycle::FramePhase;
 use gc_arena::{Collect, Mutation};
 use std::rc::Rc;
 
@@ -17,11 +20,20 @@ use std::rc::Rc;
 #[derive(Collect)]
 #[collect(no_drop)]
 pub struct OrphanManager<'gc> {
-    orphans: Rc<Vec<DisplayObjectWeak<'gc>>>,
+    orphans: Rc<Vec<Orphan<'gc>>>,
+}
+
+#[derive(Clone, Collect)]
+#[collect(no_drop)]
+struct Orphan<'gc> {
+    object: DisplayObjectWeak<'gc>,
+    // False once timeline removal has retired the object itself.
+    // Its children must still participate in the frame lifecycle.
+    run_self: bool,
 }
 
 impl<'gc> OrphanManager<'gc> {
-    fn orphans_mut(&mut self) -> &mut Vec<DisplayObjectWeak<'gc>> {
+    fn orphans_mut(&mut self) -> &mut Vec<Orphan<'gc>> {
         Rc::make_mut(&mut self.orphans)
     }
 
@@ -33,12 +45,17 @@ impl<'gc> OrphanManager<'gc> {
     pub fn add_orphan_obj(&mut self, dobj: DisplayObject<'gc>) {
         // Note: comparing pointers is correct because GcWeak keeps its allocation alive,
         // so the pointers can't overlap by accident.
-        if self
-            .orphans
-            .iter()
-            .all(|d| !std::ptr::eq(d.as_ptr(), dobj.as_ptr()))
+        if let Some(orphan) = self
+            .orphans_mut()
+            .iter_mut()
+            .find(|orphan| std::ptr::eq(orphan.object.as_ptr(), dobj.as_ptr()))
         {
-            self.orphans_mut().push(dobj.downgrade());
+            orphan.run_self = true;
+        } else {
+            self.orphans_mut().push(Orphan {
+                object: dobj.downgrade(),
+                run_self: true,
+            });
         }
     }
 
@@ -50,11 +67,21 @@ impl<'gc> OrphanManager<'gc> {
         // `Rc::make_mut` in `orphan_objects_mut`, which will leave this `Rc` unmodified.
         // This ensures that any orphan additions/removals done by `f` will not affect
         // the iteration in this method.
-        let orphan_objs: Rc<_> = context.orphan_manager.orphans.clone();
+        let orphan_objs = context.orphan_manager.orphans.clone();
 
         for orphan in orphan_objs.iter() {
-            if let Some(dobj) = valid_orphan(*orphan, context.gc()) {
-                f(dobj, context);
+            if let Some(dobj) = valid_orphan(orphan.object, context.gc()) {
+                if orphan.run_self || dobj.placed_by_avm2_script() {
+                    f(dobj, context);
+                } else if let Some(container) = dobj.as_container() {
+                    let children = container.iter_render_list();
+
+                    if *context.frame_phase == FramePhase::Enter {
+                        children.rev().for_each(|child| f(child, context));
+                    } else {
+                        children.for_each(|child| f(child, context));
+                    }
+                }
             }
         }
     }
@@ -63,32 +90,31 @@ impl<'gc> OrphanManager<'gc> {
     /// that have been garbage collected, or are no longer orphans
     /// (they've since acquired a parent).
     pub fn cleanup_dead_orphans(&mut self, mc: &Mutation<'gc>) {
-        self.orphans_mut().retain(|d| {
-            if let Some(dobj) = valid_orphan(*d, mc) {
-                // All clips that become orphaned (have their parent removed, or start out with no parent)
-                // get added to the orphan list. However, there's a distinction between clips
-                // that are removed from a RemoveObject tag, and clips that are removed from ActionScript.
-                //
-                // Clips removed from a RemoveObject tag only stay on the orphan list until the end
-                // of the frame - this lets them run a framescript (with 'this.parent == null')
-                // before they're removed. After that, they're removed from the orphan list,
-                // and will not be run in any way.
-                //
-                // Clips removed from ActionScript stay on the orphan list, and will be run
-                // indefinitely (if there are no remaining strong references, they will eventually
-                // be garbage collected).
-                //
-                // To detect this, we check 'placed_by_avm2_script'. This flag get set to 'true'
-                // for objects constructed from ActionScript, and for objects moved around
-                // in the timeline (add/remove child, swap depths) by ActionScript. A
-                // RemoveObject tag will only affect objects instantiated by the timeline,
-                // which have not been moved in the displaylist by ActionScript. Therefore,
-                // any orphan we see that has 'placed_by_avm2_script()' should stay on the orphan
-                // list, because it was not removed by a RemoveObject tag.
-                dobj.placed_by_avm2_script()
-            } else {
-                false
-            }
+        self.orphans_mut().retain_mut(|orphan| {
+            let Some(dobj) = valid_orphan(orphan.object, mc) else {
+                return false;
+            };
+            // All clips that become orphaned (have their parent removed, or start out with no parent)
+            // get added to the orphan list. However, there's a distinction between clips
+            // that are removed by a RemoveObject tag and clips removed from ActionScript.
+            //
+            // Clips removed by a RemoveObject tag run until the end of the frame, allowing
+            // their final frame script to run with `this.parent == null`. After that, we
+            // keep them on the list to process their children, but no longer run the
+            // removed clips themselves.
+            //
+            // Clips removed from ActionScript continue running indefinitely while orphaned
+            // (if there are no remaining strong references, they will eventually be
+            // garbage collected).
+            //
+            // To distinguish these cases, we check `placed_by_avm2_script`. This flag is
+            // set for objects constructed from ActionScript, and for objects moved around
+            // in the timeline (add/remove child, swap depths) by ActionScript. A
+            // RemoveObject tag only affects objects instantiated by the timeline that
+            // have not been moved in the display list by ActionScript. Therefore, an
+            // orphan with this flag set should continue running itself as well.
+            orphan.run_self = dobj.placed_by_avm2_script();
+            true
         });
     }
 }
