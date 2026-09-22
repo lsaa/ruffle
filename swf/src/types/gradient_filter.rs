@@ -1,4 +1,4 @@
-use crate::{BlurFilter, BlurFilterFlags, Fixed8, Fixed16, GradientRecord};
+use crate::{BlurFilter, BlurFilterFlags, Fixed8, Fixed16, GradientRecord, Rectangle, Twips};
 use bitflags::bitflags;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -44,6 +44,27 @@ impl GradientFilter {
             blur_x: self.blur_x,
             blur_y: self.blur_y,
             flags: BlurFilterFlags::from_passes(self.num_passes()),
+        }
+    }
+
+    pub fn calculate_dest_rect(&self, source_rect: Rectangle<Twips>) -> Rectangle<Twips> {
+        let blur_bounds = self
+            .inner_blur_filter()
+            .calculate_dest_rect(Rectangle::ZERO);
+        let distance = self.distance.to_f64();
+        let angle = self.angle.to_f64();
+        // Flash pads by the blur radius and offset, plus one pixel, rounded down.
+        let x = Twips::from_pixels(
+            (blur_bounds.x_max.to_pixels() / 2.0 + (angle.cos() * distance).abs() + 1.0).floor(),
+        );
+        let y = Twips::from_pixels(
+            (blur_bounds.y_max.to_pixels() / 2.0 + (angle.sin() * distance).abs() + 1.0).floor(),
+        );
+        Rectangle {
+            x_min: source_rect.x_min - x,
+            x_max: source_rect.x_max + x,
+            y_min: source_rect.y_min - y,
+            y_max: source_rect.y_max + y,
         }
     }
 }
